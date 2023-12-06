@@ -11,3 +11,7 @@ spirv = "0.2.0+1.5.4"
 
 rustc-hash = "1.1.0"
 indexmap = "2.1.0"
+
+[dev-dependencies]
+naga = { version = "0.14.1", features = ["spv-in", "wgsl-out"] }
+bytemuck = "1.14.0"
