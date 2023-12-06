@@ -7,7 +7,7 @@ pub struct Pass<'a> {
 }
 
 #[derive(Debug)]
-pub struct CombinedImageSampler{
+pub struct CombinedImageSampler {
     sampled_image_handle: spirv::Word,
     created_sampler: spirv::Word,
     pointer_type_id: spirv::Word,
@@ -17,9 +17,7 @@ pub struct CombinedImageSampler{
 
 impl<'a> Pass<'a> {
     pub fn new(builder: &'a mut Builder) -> Self {
-        let mut val = Self {
-            builder,
-        };
+        let mut val = Self { builder };
 
         val
     }
@@ -49,29 +47,25 @@ impl<'a> Pass<'a> {
     }
 
     fn create_sampler_name(&mut self, word: Word) -> Option<String> {
-        self.builder
-            .module_ref()
-            .debug_names
-            .iter()
-            .find_map(|i| {
-                if i.class.opcode != spirv::Op::Name {
-                    return None;
-                }
+        self.builder.module_ref().debug_names.iter().find_map(|i| {
+            if i.class.opcode != spirv::Op::Name {
+                return None;
+            }
 
-                let Some(&Operand::IdRef(target)) = &i.operands.get(0) else {
-                    return None
-                };
+            let Some(&Operand::IdRef(target)) = &i.operands.get(0) else {
+                return None;
+            };
 
-                if target != word {
-                    return None;
-                }
+            if target != word {
+                return None;
+            }
 
-                let Some(Operand::LiteralString(string)) = &i.operands.get(1) else {
-                    return None
-                };
+            let Some(Operand::LiteralString(string)) = &i.operands.get(1) else {
+                return None;
+            };
 
-                return Some(format!("_{string}_sampler"));
-            })
+            return Some(format!("_{string}_sampler"));
+        })
     }
 
     fn get_base_type_for_sampled_image(&self, inst: &Instruction) -> Option<&Instruction> {
@@ -104,19 +98,24 @@ impl<'a> Pass<'a> {
 
         for (pointer_type_id, combined_image_sampler) in image_sampler_cadidates {
             let Some(pointer_type) = self.find_global_instruction(pointer_type_id).cloned() else {
-                continue
+                continue;
             };
             if pointer_type.class.opcode == spirv::Op::TypePointer
-                && pointer_type.operands[0] ==
-                Operand::StorageClass(StorageClass::UniformConstant) {
+                && pointer_type.operands[0] == Operand::StorageClass(StorageClass::UniformConstant)
+            {
                 let Some(&Operand::IdRef(sampled_image_type)) = pointer_type.operands.get(1) else {
                     continue;
                 };
 
-                let Some(sampled_image_type) = self.find_global_instruction(sampled_image_type).cloned() else {
+                let Some(sampled_image_type) =
+                    self.find_global_instruction(sampled_image_type).cloned()
+                else {
                     continue;
                 };
-                let Some(base_type) = self.get_base_type_for_sampled_image(&sampled_image_type).cloned() else {
+                let Some(base_type) = self
+                    .get_base_type_for_sampled_image(&sampled_image_type)
+                    .cloned()
+                else {
                     continue;
                 };
 
@@ -128,23 +127,34 @@ impl<'a> Pass<'a> {
                 // todo: type binding array
                 if base_type.class.opcode == spirv::Op::TypeImage {
                     let sampler_type = self.builder.type_sampler();
-                    let sampler_pointer_type = self.builder
-                        .type_pointer(None, StorageClass::UniformConstant, sampler_type);
+                    let sampler_pointer_type = self.builder.type_pointer(
+                        None,
+                        StorageClass::UniformConstant,
+                        sampler_type,
+                    );
 
-                    let sampler_uniform = self.builder
-                        .variable(sampler_pointer_type, None, StorageClass::UniformConstant, None);
+                    let sampler_uniform = self.builder.variable(
+                        sampler_pointer_type,
+                        None,
+                        StorageClass::UniformConstant,
+                        None,
+                    );
 
-                    let decorations: Vec<Instruction> = self.builder.module_ref()
-                        .annotations.iter().filter_map(|f| {
-
-                        if f.class.opcode == spirv::Op::Decorate && f.operands[0] ==
-                            Operand::IdRef(combined_image_sampler)
-                        {
-                            Some(f.clone())
-                        } else {
-                            None
-                        }
-                    }).collect();
+                    let decorations: Vec<Instruction> = self
+                        .builder
+                        .module_ref()
+                        .annotations
+                        .iter()
+                        .filter_map(|f| {
+                            if f.class.opcode == spirv::Op::Decorate
+                                && f.operands[0] == Operand::IdRef(combined_image_sampler)
+                            {
+                                Some(f.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
 
                     if let Some(name) = self.create_sampler_name(combined_image_sampler) {
                         self.builder.name(sampler_uniform, name);
@@ -156,39 +166,46 @@ impl<'a> Pass<'a> {
                             continue;
                         };
 
-                        self.builder
-                            .decorate(
-                                sampler_uniform,
-                                decoration_type,
-                                decoration.operands[2..].iter()
-                                    .map(|f| f.clone())
-                            )
+                        self.builder.decorate(
+                            sampler_uniform,
+                            decoration_type,
+                            decoration.operands[2..].iter().map(|f| f.clone()),
+                        )
                     }
 
-                    image_sampler_types.insert(combined_image_sampler, CombinedImageSampler {
-                        sampled_image_handle: combined_image_sampler,
-                        created_sampler: sampler_uniform,
-                        sampled_image_type,
-                        pointer_type_id,
-                        base_type,
-                    });
+                    image_sampler_types.insert(
+                        combined_image_sampler,
+                        CombinedImageSampler {
+                            sampled_image_handle: combined_image_sampler,
+                            created_sampler: sampler_uniform,
+                            sampled_image_type,
+                            pointer_type_id,
+                            base_type,
+                        },
+                    );
+                    continue;
                 }
-
-
             }
         }
 
         image_sampler_types
     }
 
-
-    fn retype_combined_image_samplers(&mut self, combined_image_samplers: &FxHashMap<spirv::Word, CombinedImageSampler>) {
+    fn retype_combined_image_samplers(
+        &mut self,
+        combined_image_samplers: &FxHashMap<spirv::Word, CombinedImageSampler>,
+    ) {
         for sampled_image in combined_image_samplers.values() {
-            let Some(Some(base_type_id)) = self.get_base_type_for_sampled_image(&sampled_image.sampled_image_type).map(|f| f.result_id) else {
+            let Some(Some(base_type_id)) = self
+                .get_base_type_for_sampled_image(&sampled_image.sampled_image_type)
+                .map(|f| f.result_id)
+            else {
                 continue;
             };
 
-            let Some(image_pointer) = self.find_global_instruction_mut(sampled_image.pointer_type_id) else {
+            let Some(image_pointer) =
+                self.find_global_instruction_mut(sampled_image.pointer_type_id)
+            else {
                 continue;
             };
 
@@ -198,7 +215,10 @@ impl<'a> Pass<'a> {
         }
     }
 
-    fn rewrite_loads(&mut self, combined_image_samplers: &FxHashMap<spirv::Word, CombinedImageSampler>) {
+    fn rewrite_loads(
+        &mut self,
+        combined_image_samplers: &FxHashMap<spirv::Word, CombinedImageSampler>,
+    ) {
         let op_load_texture_id = self.builder.id();
         let op_load_sampler_id = self.builder.id();
 
@@ -221,9 +241,7 @@ impl<'a> Pass<'a> {
                         continue;
                     };
 
-
                     // todo: rewrite opaccess as well?
-
 
                     let mut load_instr = instr.clone();
 
@@ -236,11 +254,8 @@ impl<'a> Pass<'a> {
                         class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::Load),
                         result_type: combined_image_sampler.sampled_image_type.result_id,
                         result_id: Some(op_load_sampler_id),
-                        operands: vec![
-                            Operand::IdRef(combined_image_sampler.created_sampler)
-                        ],
+                        operands: vec![Operand::IdRef(combined_image_sampler.created_sampler)],
                     });
-
 
                     // reuse the old id for the OpSampleImage
                     instructions.push(Instruction {
@@ -253,14 +268,11 @@ impl<'a> Pass<'a> {
                             Operand::IdRef(op_load_sampler_id),
                         ],
                     });
-
                 }
 
                 block.instructions = instructions;
             }
         }
-
-
     }
 }
 
@@ -273,23 +285,19 @@ fn find_op_type_sampled_image(module: &Module) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
-    use std::io::Read;
-    use std::path::Path;
-    use std::rc::Rc;
     use naga::back::wgsl::WriterFlags;
     use naga::front::spv::Options;
     use naga::valid::{Capabilities, ValidationFlags};
     use rspirv::binary::{Assemble, Disassemble};
+    use std::fs::File;
+    use std::io::Read;
+    use std::path::Path;
+    use std::rc::Rc;
 
     fn check_wgsl(path: impl AsRef<Path>) {
         let mut bin = Vec::new();
 
-        File::open(path)
-            .unwrap()
-            .read_to_end(&mut bin)
-            .unwrap();
-
+        File::open(path).unwrap().read_to_end(&mut bin).unwrap();
 
         let mut loader = rspirv::dr::Loader::new();
         rspirv::binary::parse_bytes(bin, &mut loader).unwrap();
@@ -306,14 +314,17 @@ mod tests {
 
         println!("{}", pass.builder.module_ref().disassemble());
 
-        let spirv = builder.module()
-            .assemble();
+        let spirv = builder.module().assemble();
 
-        let mut module = naga::front::spv::parse_u8_slice(bytemuck::cast_slice(&spirv), &Options {
-            adjust_coordinate_space: false,
-            strict_capabilities: false,
-            block_ctx_dump_prefix: None,
-        }).unwrap();
+        let mut module = naga::front::spv::parse_u8_slice(
+            bytemuck::cast_slice(&spirv),
+            &Options {
+                adjust_coordinate_space: false,
+                strict_capabilities: false,
+                block_ctx_dump_prefix: None,
+            },
+        )
+        .unwrap();
 
         let images = module
             .global_variables
@@ -357,18 +368,15 @@ mod tests {
         let mut valid = naga::valid::Validator::new(ValidationFlags::all(), Capabilities::empty());
         let info = valid.validate(&module).unwrap();
 
-        let wgsl = naga::back::wgsl::write_string(&module, &info, WriterFlags::EXPLICIT_TYPES)
-            .unwrap();
+        let wgsl =
+            naga::back::wgsl::write_string(&module, &info, WriterFlags::EXPLICIT_TYPES).unwrap();
 
         println!("{}", wgsl);
-
     }
     #[test]
     fn it_works() {
-
         // check_wgsl("./test/combined-image-sampler.spv");
 
         check_wgsl("./test/combined-image-sampler-array.spv");
-
     }
 }
