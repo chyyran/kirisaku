@@ -1,5 +1,5 @@
 use rspirv::dr::{Builder, InsertPoint, Instruction, Module, Operand};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use spirv::{Decoration, Op, StorageClass, Word};
 
 pub struct Pass<'a> {
@@ -15,6 +15,10 @@ pub struct CombinedImageSampler {
     base_type: Instruction,
 }
 
+pub struct OpAccessChain<'a> {
+    sampled_image: &'a CombinedImageSampler,
+    index: Operand,
+}
 
 impl<'a> Pass<'a> {
     pub fn new(builder: &'a mut Builder) -> Self {
@@ -26,8 +30,17 @@ impl<'a> Pass<'a> {
     fn do_pass(&mut self) {
         let combined_image_samplers = self.collect_global_sampled_images();
         self.retype_combined_image_sampler_uniforms(&combined_image_samplers);
-        self.rewrite_scalar_loads(&combined_image_samplers);
-        self.rewrite_array_loads(&combined_image_samplers);
+
+        // First rewrite global loads
+        self.rewrite_global_loads(&combined_image_samplers);
+
+        let op_access_chains = self.rewrite_global_op_access_chain(&combined_image_samplers);
+        self.rewrite_op_access_chain_loads(&op_access_chains);
+        // Collect functions that reference combined image samplers indirectly (todo) (also rewrite the found OpFunctionCall)
+        // notes: OpFunctionCall %void %assign_s21_ %tex (i.e for scalar no OpLoad precedes, OpLoad and OpAccessChain is in function), this is true even when passing array of samplers
+        //        However, if passing single sampler from array, OpAccessChain happens in outer scope.
+        // Rewrite functions that do so by adding sampler param
+        // rewrite loads + op_access_chains for functions
     }
 
     fn ensure_op_type_sampler(&mut self) {
@@ -70,7 +83,10 @@ impl<'a> Pass<'a> {
         })
     }
 
-    fn get_base_type_for_sampled_image(&'a self, mut inst: &'a Instruction) -> Option<&'a Instruction> {
+    fn get_base_type_for_sampled_image(
+        &'a self,
+        mut inst: &'a Instruction,
+    ) -> Option<&'a Instruction> {
         if inst.class.opcode != spirv::Op::TypeSampledImage {
             return None;
         }
@@ -82,14 +98,15 @@ impl<'a> Pass<'a> {
         self.find_global_instruction(referand)
     }
 
-    // (Type, Uniform)
-    fn create_sampler_uniform(&mut self, uniform_type: spirv::Word, combined_image_sampler: spirv::Word)
-        -> (spirv::Word, spirv::Word){
-        let sampler_pointer_type = self.builder.type_pointer(
-            None,
-            StorageClass::UniformConstant,
-            uniform_type,
-        );
+    // Create a sampler OpVariable at the selected block
+    fn create_sampler_uniform(
+        &mut self,
+        uniform_type: spirv::Word,
+        combined_image_sampler: spirv::Word,
+    ) -> spirv::Word {
+        let sampler_pointer_type =
+            self.builder
+                .type_pointer(None, StorageClass::UniformConstant, uniform_type);
 
         let sampler_uniform = self.builder.variable(
             sampler_pointer_type,
@@ -131,7 +148,7 @@ impl<'a> Pass<'a> {
             )
         }
 
-        (sampler_pointer_type, sampler_uniform)
+        sampler_uniform
     }
     fn collect_global_sampled_images(&mut self) -> FxHashMap<spirv::Word, CombinedImageSampler> {
         let mut image_sampler_cadidates = Vec::new();
@@ -161,19 +178,17 @@ impl<'a> Pass<'a> {
                     continue;
                 };
 
-                let Some(uniform_type) =
-                    self.find_global_instruction(sampled_image_type).cloned()
+                let Some(uniform_type) = self.find_global_instruction(sampled_image_type).cloned()
+                else {
+                    continue;
+                };
+
+                if uniform_type.class.opcode == spirv::Op::TypeSampledImage {
+                    let Some(base_type) =
+                        self.get_base_type_for_sampled_image(&uniform_type).cloned()
                     else {
                         continue;
                     };
-
-                if uniform_type.class.opcode == spirv::Op::TypeSampledImage {
-                    let Some(base_type) = self
-                        .get_base_type_for_sampled_image(&uniform_type)
-                        .cloned()
-                        else {
-                            continue;
-                        };
 
                     let Some(combined_image_sampler) = global_variable else {
                         continue;
@@ -184,15 +199,10 @@ impl<'a> Pass<'a> {
                         continue;
                     }
 
-                    let Some(base_type_id) = base_type.result_id else {
-                        continue;
-                    };
-
                     let sampler_type = self.builder.type_sampler();
 
-                    let (sampler_pointer_type, sampler_uniform) = self.create_sampler_uniform(
-                        sampler_type, combined_image_sampler
-                    );
+                    let sampler_uniform =
+                        self.create_sampler_uniform(sampler_type, combined_image_sampler);
 
                     image_sampler_types.insert(
                         combined_image_sampler,
@@ -209,7 +219,8 @@ impl<'a> Pass<'a> {
                 }
 
                 if uniform_type.class.opcode == spirv::Op::TypeArray {
-                    let Some(&Operand::IdRef(array_base_type)) = uniform_type.operands.get(0) else {
+                    let Some(&Operand::IdRef(array_base_type)) = uniform_type.operands.get(0)
+                    else {
                         continue;
                     };
 
@@ -219,17 +230,16 @@ impl<'a> Pass<'a> {
 
                     let Some(sampled_image_type) =
                         self.find_global_instruction(array_base_type).cloned()
-                        else {
-                            continue;
-                        };
+                    else {
+                        continue;
+                    };
 
                     let Some(base_type) = self
                         .get_base_type_for_sampled_image(&sampled_image_type)
                         .cloned()
-                        else {
-                            continue;
-                        };
-
+                    else {
+                        continue;
+                    };
 
                     let Some(combined_image_sampler) = global_variable else {
                         continue;
@@ -242,9 +252,8 @@ impl<'a> Pass<'a> {
                     let sampler_type = self.builder.type_sampler();
                     let sampler_array_type = self.builder.type_array(sampler_type, array_length);
 
-                    let (sampler_pointer_type, sampler_uniform) = self.create_sampler_uniform(
-                        sampler_array_type, combined_image_sampler
-                    );
+                    let sampler_uniform =
+                        self.create_sampler_uniform(sampler_array_type, combined_image_sampler);
 
                     image_sampler_types.insert(
                         combined_image_sampler,
@@ -258,7 +267,6 @@ impl<'a> Pass<'a> {
                     );
                     continue;
                 }
-
             }
         }
 
@@ -271,8 +279,7 @@ impl<'a> Pass<'a> {
     ) {
         // Need to rebuild the global instructions because we need to insert new types...
         let mut instructions = Vec::new();
-        for instr in self.builder.module_ref()
-            .types_global_values.clone() {
+        for instr in self.builder.module_ref().types_global_values.clone() {
             let Some(result_id) = instr.result_id else {
                 instructions.push(instr);
                 continue;
@@ -289,7 +296,6 @@ impl<'a> Pass<'a> {
                 continue;
             };
 
-
             // If it's a OpTypeSampledImage, we want to change the variable type to &TypeImage.
             if sampled_image.original_uniform_type.class.opcode == spirv::Op::TypeSampledImage {
                 // keep labels in sync
@@ -299,12 +305,14 @@ impl<'a> Pass<'a> {
                     class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::TypePointer),
                     result_type: None,
                     result_id: Some(op_type_pointer_id),
-                    operands: vec![Operand::StorageClass(StorageClass::UniformConstant), Operand::IdRef(base_type_id)],
+                    operands: vec![
+                        Operand::StorageClass(StorageClass::UniformConstant),
+                        Operand::IdRef(base_type_id),
+                    ],
                 });
 
                 let mut op_variable = instr;
-                op_variable
-                    .result_type = Some(op_type_pointer_id);
+                op_variable.result_type = Some(op_type_pointer_id);
 
                 instructions.push(op_variable);
                 continue;
@@ -313,9 +321,10 @@ impl<'a> Pass<'a> {
             // Re-type array globals.
             // We don't need to worry about the pointer type of the load, as
             // we can instantiate that later.
-            if sampled_image
-                .original_uniform_type.class.opcode == spirv::Op::TypeArray {
-                let Some(&Operand::IdRef(array_length)) = sampled_image.original_uniform_type.operands.get(1) else {
+            if sampled_image.original_uniform_type.class.opcode == spirv::Op::TypeArray {
+                let Some(&Operand::IdRef(array_length)) =
+                    sampled_image.original_uniform_type.operands.get(1)
+                else {
                     instructions.push(instr);
                     continue;
                 };
@@ -337,31 +346,33 @@ impl<'a> Pass<'a> {
                     class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::TypePointer),
                     result_type: None,
                     result_id: Some(op_type_pointer_id),
-                    operands: vec![Operand::StorageClass(StorageClass::UniformConstant), Operand::IdRef(op_type_array_id)],
+                    operands: vec![
+                        Operand::StorageClass(StorageClass::UniformConstant),
+                        Operand::IdRef(op_type_array_id),
+                    ],
                 });
 
                 let mut op_variable = instr;
-                op_variable
-                    .result_type = Some(op_type_pointer_id);
+                op_variable.result_type = Some(op_type_pointer_id);
 
                 instructions.push(op_variable);
             }
         }
 
         // replace
-        self.builder
-            .module_mut().types_global_values = instructions;
+        self.builder.module_mut().types_global_values = instructions;
     }
 
-    fn rewrite_scalar_loads(
+    fn rewrite_global_loads(
         &mut self,
         combined_image_samplers: &FxHashMap<spirv::Word, CombinedImageSampler>,
     ) {
-        let op_load_texture_id = self.builder.id();
-        let op_load_sampler_id = self.builder.id();
         let op_type_sampler = self.builder.type_sampler();
 
-        for function in self.builder.module_mut().functions.iter_mut() {
+        // need to clone
+        let mut functions = self.builder.module_ref().functions.clone();
+
+        for function in functions.iter_mut() {
             for block in function.blocks.iter_mut() {
                 let mut instructions = Vec::new();
                 for instr in block.instructions.drain(..) {
@@ -371,83 +382,17 @@ impl<'a> Pass<'a> {
                     }
 
                     // This doesn't affect array loads because array loads load the result of the OpAccessChain which can be done in a separate pass.
-                    let Some(Operand::IdRef(op_variable)) = &instr.operands.get(0) else {
+                    let Some(Operand::IdRef(op_variable_id)) = &instr.operands.get(0) else {
                         instructions.push(instr);
                         continue;
                     };
 
-                    let Some(combined_image_sampler) = combined_image_samplers.get(op_variable) else {
-                        // We need to fix..
+                    let Some(combined_image_sampler) = combined_image_samplers.get(op_variable_id)
+                    else {
+                        // Ignore what we didn't process before.
                         instructions.push(instr);
                         continue;
                     };
-
-                    // todo: rewrite opaccess as well?
-
-                    let mut load_instr = instr.clone();
-
-                    load_instr.result_type = combined_image_sampler.base_type.result_id;
-                    load_instr.result_id = Some(op_load_texture_id);
-                    instructions.push(load_instr);
-
-                    // load the sampler
-                    instructions.push(Instruction {
-                        class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::Load),
-                        result_type: Some(op_type_sampler),
-                        result_id: Some(op_load_sampler_id),
-                        operands: vec![Operand::IdRef(combined_image_sampler.created_sampler)],
-                    });
-
-                    // reuse the old id for the OpSampleImage
-                    instructions.push(Instruction {
-                        class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::SampledImage),
-                        result_type: combined_image_sampler.original_uniform_type.result_id,
-                        result_id: instr.result_id,
-
-                        operands: vec![
-                            Operand::IdRef(op_load_texture_id),
-                            Operand::IdRef(op_load_sampler_id),
-                        ],
-                    });
-                }
-
-                block.instructions = instructions;
-            }
-        }
-    }
-
-    fn rewrite_array_loads(
-        &mut self,
-        combined_image_samplers: &FxHashMap<spirv::Word, CombinedImageSampler>,
-    ) {
-        let op_type_sampler = self.builder.type_sampler();
-
-        // need to clone
-        let mut functions = self.builder.module_ref()
-            .functions.clone();
-
-        for function in functions.iter_mut() {
-            for block in function.blocks.iter_mut() {
-                let mut instructions = Vec::new();
-                for instr in block.instructions.clone() {
-                    if instr.class.opcode != Op::AccessChain {
-                        instructions.push(instr);
-                        continue;
-                    }
-
-                    // This doesn't affect array loads because array loads load the result of the OpAccessChain which can be done in a separate pass.
-                    let Some(Operand::IdRef(op_variable)) = &instr.operands.get(0) else {
-                        instructions.push(instr);
-                        continue;
-                    };
-
-                    let Some(combined_image_sampler) = combined_image_samplers.get(op_variable) else {
-                        // We need to fix..
-                        instructions.push(instr);
-                        continue;
-                    };
-
-                    // todo: rewrite opaccess as well?
 
                     let op_load_texture_id = self.builder.id();
                     let op_load_sampler_id = self.builder.id();
@@ -478,11 +423,187 @@ impl<'a> Pass<'a> {
                         ],
                     });
                 }
+                block.instructions = instructions;
             }
         }
 
-        self.builder
-            .module_mut().functions = functions;
+        self.builder.module_mut().functions = functions;
+    }
+
+    fn rewrite_global_op_access_chain<'b>(
+        &mut self,
+        combined_image_samplers: &'b FxHashMap<spirv::Word, CombinedImageSampler>,
+    ) -> FxHashMap<spirv::Word, OpAccessChain<'b>> {
+        // need to clone
+        let mut functions = self.builder.module_ref().functions.clone();
+
+        let mut seen_op_access_chain = FxHashMap::default();
+
+        for function in functions.iter_mut() {
+            for block in function.blocks.iter_mut() {
+                let mut instructions = Vec::new();
+
+                // This needs to be done in two passes, first to find the OpAccessChains and
+                // update their type to the pointer type of the scalar value,
+
+                // Then to update the OpLoads.
+                for instr in block.instructions.clone() {
+                    if instr.class.opcode != Op::AccessChain {
+                        instructions.push(instr);
+                        continue;
+                    }
+
+                    // Need to refer to it later
+                    let Some(result_id) = instr.result_id else {
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    // This doesn't affect array loads because array loads load the result of the OpAccessChain which can be done in a separate pass.
+                    let Some(Operand::IdRef(op_variable)) = &instr.operands.get(0) else {
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    // Ensure that this is an OpAccessChain of our combined image sampler.
+                    let Some(sampled_image) = combined_image_samplers.get(op_variable) else {
+                        // Ignore what we didn't process before.
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    let Some(base_type_id) = sampled_image.base_type.result_id else {
+                        // Ignore what we didn't process before.
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    let op_pointer_type_id = self.builder.type_pointer(
+                        None,
+                        StorageClass::UniformConstant,
+                        base_type_id,
+                    );
+
+                    let index = instr.operands[1].clone();
+
+                    let mut op_access_chain = instr;
+
+                    op_access_chain.result_type = Some(op_pointer_type_id);
+
+                    instructions.push(op_access_chain);
+
+                    seen_op_access_chain.insert(
+                        result_id,
+                        OpAccessChain {
+                            sampled_image,
+                            index,
+                        },
+                    );
+                }
+
+                block.instructions = instructions;
+            }
+        }
+
+        self.builder.module_mut().functions = functions;
+        seen_op_access_chain
+    }
+
+    fn rewrite_op_access_chain_loads(
+        &mut self,
+        op_access_chains: &FxHashMap<spirv::Word, OpAccessChain>,
+    ) {
+        let op_type_sampler = self.builder.type_sampler();
+        let op_type_sampler_pointer =
+            self.builder
+                .type_pointer(None, StorageClass::UniformConstant, op_type_sampler);
+
+        let mut functions = self.builder.module_ref().functions.clone();
+
+        for function in functions.iter_mut() {
+            for block in function.blocks.iter_mut() {
+                let mut instructions = Vec::new();
+
+                // This needs to be done in two passes, first to find the OpAccessChains and
+                // update their type to the pointer type of the scalar value,
+
+                // Then to update the OpLoads.
+                for instr in block.instructions.clone() {
+                    if instr.class.opcode != Op::Load {
+                        instructions.push(instr);
+                        continue;
+                    }
+
+                    let Some(Operand::IdRef(op_variable)) = &instr.operands.get(0) else {
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    // Ensure that this is an OpLoad of the previous OpAccessChain
+                    let Some(&OpAccessChain {
+                        sampled_image,
+                        ref index,
+                    }) = op_access_chains.get(op_variable)
+                    else {
+                        // Ignore what we didn't process before.
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    let Some(base_type_id) = sampled_image.base_type.result_id else {
+                        // Ignore what we didn't process before.
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    let op_load_texture_id = self.builder.id();
+                    let op_load_sampler_id = self.builder.id();
+                    let op_access_chain_sampler_id = self.builder.id();
+
+                    let op_type_sampled_image = self.builder.type_sampled_image(base_type_id);
+
+                    let mut load_instr = instr.clone();
+
+                    load_instr.result_type = sampled_image.base_type.result_id;
+                    load_instr.result_id = Some(op_load_texture_id);
+                    instructions.push(load_instr);
+
+                    // load the sampler
+                    instructions.push(Instruction {
+                        class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::AccessChain),
+                        result_type: Some(op_type_sampler_pointer),
+                        result_id: Some(op_access_chain_sampler_id),
+                        operands: vec![
+                            Operand::IdRef(sampled_image.created_sampler),
+                            index.clone(),
+                        ],
+                    });
+
+                    instructions.push(Instruction {
+                        class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::Load),
+                        result_type: Some(op_type_sampler),
+                        result_id: Some(op_load_sampler_id),
+                        operands: vec![Operand::IdRef(op_access_chain_sampler_id)],
+                    });
+
+                    // reuse the old id for the OpSampleImage
+                    instructions.push(Instruction {
+                        class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::SampledImage),
+                        result_type: Some(op_type_sampled_image),
+                        result_id: instr.result_id,
+
+                        operands: vec![
+                            Operand::IdRef(op_load_texture_id),
+                            Operand::IdRef(op_load_sampler_id),
+                        ],
+                    });
+                }
+
+                block.instructions = instructions;
+            }
+        }
+
+        self.builder.module_mut().functions = functions;
     }
 }
 
@@ -528,7 +649,7 @@ mod tests {
 
         File::create("out.spv")
             .unwrap()
-            .write_all( bytemuck::cast_slice(&spirv))
+            .write_all(bytemuck::cast_slice(&spirv))
             .unwrap();
 
         let mut module = naga::front::spv::parse_u8_slice(
@@ -588,6 +709,7 @@ mod tests {
 
         println!("{}", wgsl);
     }
+
     #[test]
     fn it_works() {
         // check_wgsl("./test/combined-image-sampler.spv");
