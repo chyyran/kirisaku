@@ -1,0 +1,56 @@
+; SPIR-V
+; Version: 1.0
+; Generator: Khronos Glslang Reference Front End; 11
+; Bound: 30
+; Schema: 0
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %main "main" %color
+               OpExecutionMode %main OriginUpperLeft
+               OpSource GLSL 450
+               OpName %main "main"
+               OpName %access_t21_p1_ "access(t21;p1;"
+               OpName %tex1 "tex1"
+               OpName %samp "samp"
+               OpName %color "color"
+               OpName %tex "tex"
+               OpName %_tex_sampler "_tex_sampler"
+               OpDecorate %color Location 0
+               OpDecorate %tex DescriptorSet 0
+               OpDecorate %tex Binding 1
+               OpDecorate %_tex_sampler DescriptorSet 0
+               OpDecorate %_tex_sampler Binding 1
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+      %float = OpTypeFloat 32
+          %7 = OpTypeImage %float 2D 0 0 0 1 Unknown
+%_ptr_UniformConstant_7 = OpTypePointer UniformConstant %7
+          %9 = OpTypeSampler
+%_ptr_UniformConstant_9 = OpTypePointer UniformConstant %9
+         %11 = OpTypeFunction %void %_ptr_UniformConstant_7 %_ptr_UniformConstant_9
+    %v4float = OpTypeVector %float 4
+%_ptr_Output_v4float = OpTypePointer Output %v4float
+      %color = OpVariable %_ptr_Output_v4float Output
+         %21 = OpTypeSampledImage %7
+    %v2float = OpTypeVector %float 2
+    %float_0 = OpConstant %float 0
+         %25 = OpConstantComposite %v2float %float_0 %float_0
+        %tex = OpVariable %_ptr_UniformConstant_7 UniformConstant
+%_tex_sampler = OpVariable %_ptr_UniformConstant_9 UniformConstant
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+         %29 = OpFunctionCall %void %access_t21_p1_ %tex %_tex_sampler
+               OpReturn
+               OpFunctionEnd
+%access_t21_p1_ = OpFunction %void None %11
+       %tex1 = OpFunctionParameter %_ptr_UniformConstant_7
+       %samp = OpFunctionParameter %_ptr_UniformConstant_9
+         %15 = OpLabel
+         %19 = OpLoad %7 %tex1
+         %20 = OpLoad %9 %samp
+         %22 = OpSampledImage %21 %19 %20
+         %26 = OpImageSampleImplicitLod %v4float %22 %25
+               OpStore %color %26
+               OpReturn
+               OpFunctionEnd

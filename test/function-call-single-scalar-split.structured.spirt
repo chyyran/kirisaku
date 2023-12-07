@@ -1,0 +1,47 @@
+module.dialect = spv.Module(version: 1.0, spv.Capability.Shader, spv.MemoryModel.GLSL450)
+
+module.debug_info = spv.Module.DebugInfo(
+  generator: spv.Tool(id: 8, version: 11),
+  source_languages: {
+    spv.SourceLanguage.GLSL(version: 450): {},
+  },
+)
+
+type T0 = spv.OpTypeImage(SampledType: f32, spv.Dim.2D, Depth: 0, Arrayed: 0, MS: 0, Sampled: 1, spv.ImageFormat.Unknown)
+
+type T1 = spv.OpTypePointer(spv.StorageClass.UniformConstant, T0)
+
+type T2 = spv.OpTypePointer(spv.StorageClass.UniformConstant, spv.OpTypeSampler)
+
+#[spv.Decoration.Location(Location: 0)]
+global_var GV`color`(spv.StorageClass.Output): f32×4
+
+func F`access(t21;p1;`(
+  #[name = "tex1"]
+  v0: T1,
+  #[name = "samp"]
+  v1: T2,
+) {
+  v2 = spv.OpLoad(Pointer: v0): T0
+  v3 = spv.OpLoad(Pointer: v1): spv.OpTypeSampler
+  v4 = spv.OpSampledImage(Image: v2, Sampler: v3): spv.OpTypeSampledImage(ImageType: T0)
+  v5 = spv.OpImageSampleImplicitLod(SampledImage: v4, Coordinate: f32×2(0.0, 0.0)): f32×4
+  spv.OpStore(Pointer: &GV`color`, Object: v5)
+}
+
+#[spv.Decoration.Binding(BindingPoint: 1)]
+#[spv.Decoration.DescriptorSet(DescriptorSet: 0)]
+global_var GV`tex`(spv.StorageClass.UniformConstant): T0
+
+#[spv.Decoration.Binding(BindingPoint: 1)]
+#[spv.Decoration.DescriptorSet(DescriptorSet: 0)]
+global_var GV`_tex_sampler`(spv.StorageClass.UniformConstant): spv.OpTypeSampler
+
+#[spv.ExecutionMode.OriginUpperLeft]
+func F`main`() {
+  call F`access(t21;p1;`(&GV`tex`, &GV`_tex_sampler`)
+}
+
+export {
+  spv.OpEntryPoint(spv.ExecutionModel.Fragment, Name: "main"): F`main`,
+}

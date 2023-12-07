@@ -1,0 +1,46 @@
+; SPIR-V
+; Version: 1.0
+; Generator: Khronos Glslang Reference Front End; 11
+; Bound: 24
+; Schema: 0
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %main "main" %color
+               OpExecutionMode %main OriginUpperLeft
+               OpSource GLSL 450
+               OpName %main "main"
+               OpName %access_s21_ "access(s21;"
+               OpName %tex1 "tex1"
+               OpName %color "color"
+               OpName %tex "tex"
+               OpDecorate %color Location 0
+               OpDecorate %tex DescriptorSet 0
+               OpDecorate %tex Binding 1
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+      %float = OpTypeFloat 32
+          %7 = OpTypeImage %float 2D 0 0 0 1 Unknown
+          %8 = OpTypeSampledImage %7
+%_ptr_UniformConstant_8 = OpTypePointer UniformConstant %8
+         %10 = OpTypeFunction %void %_ptr_UniformConstant_8
+    %v4float = OpTypeVector %float 4
+%_ptr_Output_v4float = OpTypePointer Output %v4float
+      %color = OpVariable %_ptr_Output_v4float Output
+    %v2float = OpTypeVector %float 2
+    %float_0 = OpConstant %float 0
+         %20 = OpConstantComposite %v2float %float_0 %float_0
+        %tex = OpVariable %_ptr_UniformConstant_8 UniformConstant
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+         %23 = OpFunctionCall %void %access_s21_ %tex
+               OpReturn
+               OpFunctionEnd
+%access_s21_ = OpFunction %void None %10
+       %tex1 = OpFunctionParameter %_ptr_UniformConstant_8
+         %13 = OpLabel
+         %17 = OpLoad %8 %tex1
+         %21 = OpImageSampleImplicitLod %v4float %17 %20
+               OpStore %color %21
+               OpReturn
+               OpFunctionEnd

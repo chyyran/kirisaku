@@ -1,0 +1,65 @@
+; SPIR-V
+; Version: 1.0
+; Generator: Khronos Glslang Reference Front End; 11
+; Bound: 43
+; Schema: 0
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %main "main" %color
+               OpExecutionMode %main OriginUpperLeft
+               OpSource GLSL 450
+               OpName %main "main"
+               OpName %color "color"
+               OpName %tex "tex"
+               OpName %_tex_sampler "_tex_sampler"
+               OpDecorate %color Location 0
+               OpDecorate %tex DescriptorSet 0
+               OpDecorate %tex Binding 1
+               OpDecorate %_tex_sampler DescriptorSet 1
+               OpDecorate %_tex_sampler Binding 1
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+      %float = OpTypeFloat 32
+    %v4float = OpTypeVector %float 4
+%_ptr_Output_v4float = OpTypePointer Output %v4float
+      %color = OpVariable %_ptr_Output_v4float Output
+         %10 = OpTypeImage %float 2D 0 0 0 1 Unknown
+       %uint = OpTypeInt 32 0
+     %uint_2 = OpConstant %uint 2
+%_arr_10_uint_2 = OpTypeArray %10 %uint_2
+%_ptr_UniformConstant__arr_10_uint_2 = OpTypePointer UniformConstant %_arr_10_uint_2
+        %tex = OpVariable %_ptr_UniformConstant__arr_10_uint_2 UniformConstant
+        %int = OpTypeInt 32 1
+      %int_0 = OpConstant %int 0
+%_ptr_type_tex2d = OpTypePointer UniformConstant %10
+         %21 = OpTypeSampler
+%_arr_21_uint_2 = OpTypeArray %21 %uint_2
+%_ptr_UniformConstant__arr_21_uint_2 = OpTypePointer UniformConstant %_arr_21_uint_2
+%_tex_sampler = OpVariable %_ptr_UniformConstant__arr_21_uint_2 UniformConstant
+%_ptr_UniformConstant_21 = OpTypePointer UniformConstant %21
+         %28 = OpTypeSampledImage %10
+    %v2float = OpTypeVector %float 2
+    %float_0 = OpConstant %float 0
+         %32 = OpConstantComposite %v2float %float_0 %float_0
+      %int_1 = OpConstant %int 1
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+         %19 = OpAccessChain %_ptr_type_tex2d %tex %int_0
+         %20 = OpLoad %10 %19
+         %26 = OpAccessChain %_ptr_UniformConstant_21 %_tex_sampler %int_0
+         %27 = OpLoad %21 %26
+         %29 = OpSampledImage %28 %20 %27
+         %33 = OpImageSampleImplicitLod %v4float %29 %32
+               OpStore %color %33
+         %34 = OpLoad %v4float %color
+         %36 = OpAccessChain %_ptr_type_tex2d %tex %int_1
+         %37 = OpLoad %10 %36
+         %38 = OpAccessChain %_ptr_UniformConstant_21 %_tex_sampler %int_1
+         %39 = OpLoad %21 %38
+         %40 = OpSampledImage %28 %37 %39
+         %41 = OpImageSampleImplicitLod %v4float %40 %32
+         %42 = OpFMul %v4float %34 %41
+               OpStore %color %42
+               OpReturn
+               OpFunctionEnd
