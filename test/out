@@ -1,0 +1,64 @@
+OpCapability Shader
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %4 "main" %19
+OpExecutionMode %4 OriginUpperLeft
+OpSource GLSL 450
+OpName %4 "main"
+OpName %15 "access(s21[2];"
+OpName %14 "tex1"
+OpName %19 "color"
+OpName %29 "tex"
+OpName %34 "_tex_sampler"
+OpDecorate %19 Location 0
+OpDecorate %29 DescriptorSet 0
+OpDecorate %29 Binding 1
+OpDecorate %34 DescriptorSet 0
+OpDecorate %34 Binding 1
+%2 = OpTypeVoid
+%3 = OpTypeFunction %2
+%6 = OpTypeFloat 32
+%7 = OpTypeImage %6 2D 0 0 0 1 Unknown
+%8 = OpTypeSampledImage %7
+%9 = OpTypeInt 32 0
+%10 = OpConstant  %9  2
+%11 = OpTypeArray %8 %10
+%12 = OpTypePointer UniformConstant %11
+%13 = OpTypeFunction %2 %12
+%17 = OpTypeVector %6 4
+%18 = OpTypePointer Output %17
+%19 = OpVariable  %18  Output
+%20 = OpTypeInt 32 1
+%21 = OpConstant  %20  0
+%22 = OpTypePointer UniformConstant %8
+%25 = OpTypeVector %6 2
+%26 = OpConstant  %6  0.0
+%27 = OpConstantComposite  %25  %26 %26
+%35 = OpTypeArray %7 %10
+%36 = OpTypePointer UniformConstant %35
+%29 = OpVariable  %36  UniformConstant
+%31 = OpTypeSampler
+%32 = OpTypeArray %31 %10
+%33 = OpTypePointer UniformConstant %32
+%34 = OpVariable  %33  UniformConstant
+%37 = OpTypePointer UniformConstant %31
+%39 = OpTypeFunction %2 %12 %33
+%43 = OpTypeSampledImage %11
+%4 = OpFunction  %2  None %3
+%5 = OpLabel
+%30 = OpFunctionCall  %2  %15 %29 %34
+OpReturn
+OpFunctionEnd
+%15 = OpFunction  %2  None %39
+%14 = OpFunctionParameter  %12
+%38 = OpFunctionParameter  %33
+%16 = OpLabel
+%23 = OpAccessChain  %12  %14 %21
+%40 = OpLoad  %11  %23
+%42 = OpAccessChain  %37  %38 %21
+%41 = OpLoad  %31  %42
+%24 = OpSampledImage  %43  %40 %41
+%28 = OpImageSampleImplicitLod  %17  %24 %27
+OpStore %19 %28
+OpReturn
+OpFunctionEnd

@@ -1,0 +1,61 @@
+; SPIR-V
+; Version: 1.0
+; Generator: Khronos Glslang Reference Front End; 11
+; Bound: 35
+; Schema: 0
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %main "main" %color
+               OpExecutionMode %main OriginUpperLeft
+               OpSource GLSL 450
+               OpName %main "main"
+               OpName %access2_s21_2__ "access2(s21[2];"
+               OpName %tex1 "tex1"
+               OpName %access_s21_2__ "access(s21[2];"
+               OpName %tex1_0 "tex1"
+               OpName %color "color"
+               OpName %tex "tex"
+               OpDecorate %color Location 0
+               OpDecorate %tex DescriptorSet 0
+               OpDecorate %tex Binding 1
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+      %float = OpTypeFloat 32
+          %7 = OpTypeImage %float 2D 0 0 0 1 Unknown
+          %8 = OpTypeSampledImage %7
+       %uint = OpTypeInt 32 0
+     %uint_2 = OpConstant %uint 2
+%_arr_8_uint_2 = OpTypeArray %8 %uint_2
+%_ptr_UniformConstant__arr_8_uint_2 = OpTypePointer UniformConstant %_arr_8_uint_2
+         %13 = OpTypeFunction %void %_ptr_UniformConstant__arr_8_uint_2
+    %v4float = OpTypeVector %float 4
+%_ptr_Output_v4float = OpTypePointer Output %v4float
+      %color = OpVariable %_ptr_Output_v4float Output
+        %int = OpTypeInt 32 1
+      %int_0 = OpConstant %int 0
+%_ptr_UniformConstant_8 = OpTypePointer UniformConstant %8
+    %v2float = OpTypeVector %float 2
+    %float_0 = OpConstant %float 0
+         %30 = OpConstantComposite %v2float %float_0 %float_0
+        %tex = OpVariable %_ptr_UniformConstant__arr_8_uint_2 UniformConstant
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+         %34 = OpFunctionCall %void %access_s21_2__ %tex
+               OpReturn
+               OpFunctionEnd
+%access2_s21_2__ = OpFunction %void None %13
+       %tex1 = OpFunctionParameter %_ptr_UniformConstant__arr_8_uint_2
+         %16 = OpLabel
+         %26 = OpAccessChain %_ptr_UniformConstant_8 %tex1 %int_0
+         %27 = OpLoad %8 %26
+         %31 = OpImageSampleImplicitLod %v4float %27 %30
+               OpStore %color %31
+               OpReturn
+               OpFunctionEnd
+%access_s21_2__ = OpFunction %void None %13
+     %tex1_0 = OpFunctionParameter %_ptr_UniformConstant__arr_8_uint_2
+         %19 = OpLabel
+         %32 = OpFunctionCall %void %access2_s21_2__ %tex1_0
+               OpReturn
+               OpFunctionEnd
