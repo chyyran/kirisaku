@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use rspirv::dr::{Builder, InsertPoint, Instruction, Module, Operand};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -7,7 +8,7 @@ pub struct Pass<'a> {
     pub builder: &'a mut Builder,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CombinedImageSampler {
     texture_variable: spirv::Word,
     sampler_variable: spirv::Word,
@@ -26,6 +27,9 @@ pub struct CombinedImageSampler {
 pub struct OpAccessChain<'a> {
     sampled_image: &'a CombinedImageSampler,
     index: Operand,
+    original_result_type: Word,
+    target_pointer_type: Word,
+    pub result_id: Word,
 }
 
 #[derive(Debug)]
@@ -49,7 +53,7 @@ impl<'a> Pass<'a> {
         // First rewrite global loads
         self.rewrite_loads(&combined_image_samplers);
 
-        let mut op_access_chains = self.rewrite_op_access_chain(&combined_image_samplers);
+        let mut op_access_chains = self.collect_op_access_chain(&combined_image_samplers);
         self.rewrite_global_op_access_chain_loads(&op_access_chains);
 
         // Collect functions that reference combined image samplers indirectly (todo) (also rewrite the found OpFunctionCall)
@@ -58,10 +62,10 @@ impl<'a> Pass<'a> {
         while !combined_image_samplers.is_empty() {
             let op_functions = self.rewrite_function_calls(&op_access_chains, &combined_image_samplers);
 
-            combined_image_samplers = self.rewrite_functions(&op_functions);
+            combined_image_samplers = self.rewrite_functions_definitions(&op_functions);
             self.rewrite_loads(&combined_image_samplers);
 
-            op_access_chains = self.rewrite_op_access_chain(&combined_image_samplers);
+            op_access_chains = self.collect_op_access_chain(&combined_image_samplers);
 
             eprintln!("{:?}", &op_access_chains);
             self.rewrite_global_op_access_chain_loads(&op_access_chains);
@@ -471,7 +475,7 @@ impl<'a> Pass<'a> {
         self.builder.module_mut().functions = functions;
     }
 
-    fn rewrite_op_access_chain<'b>(
+    fn collect_op_access_chain<'b>(
         &mut self,
         combined_image_samplers: &'b FxHashMap<spirv::Word, CombinedImageSampler>,
     ) -> FxHashMap<spirv::Word, OpAccessChain<'b>> {
@@ -513,11 +517,27 @@ impl<'a> Pass<'a> {
                         continue;
                     };
 
+                    let Some(original_result_type) = instr
+                        .result_type else {
+                        // Ignore what we didn't process before.
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    let Some(index) = instr
+                        .operands.get(1).cloned() else {
+                        // Ignore what we didn't process before.
+                        instructions.push(instr);
+                        continue;
+                    };
+
                     let Some(base_type_id) = sampled_image.base_type.result_id else {
                         // Ignore what we didn't process before.
                         instructions.push(instr);
                         continue;
                     };
+
+
 
                     let op_pointer_type_id = self.builder.type_pointer(
                         None,
@@ -525,9 +545,12 @@ impl<'a> Pass<'a> {
                         base_type_id,
                     );
 
-                    let index = instr.operands[1].clone();
-
                     let mut op_access_chain = instr;
+
+                    let Some(result_id) = op_access_chain.result_id else {
+                        instructions.push(op_access_chain);
+                        continue;
+                    };
 
                     op_access_chain.result_type = Some(op_pointer_type_id);
 
@@ -538,6 +561,9 @@ impl<'a> Pass<'a> {
                         OpAccessChain {
                             sampled_image,
                             index,
+                            original_result_type,
+                            target_pointer_type: op_pointer_type_id,
+                            result_id
                         },
                     );
                 }
@@ -584,6 +610,7 @@ impl<'a> Pass<'a> {
                     let Some(&OpAccessChain {
                         sampled_image,
                         ref index,
+                        ..
                     }) = op_access_chains.get(op_variable)
                     else {
                         // Ignore what we didn't process before.
@@ -656,10 +683,11 @@ impl<'a> Pass<'a> {
         &mut self,
         op_access_chains: &'b FxHashMap<spirv::Word, OpAccessChain>,
         combined_image_samplers: &'b FxHashMap<spirv::Word, CombinedImageSampler>,
-    ) -> FxHashMap<spirv::Word, FxHashMap<spirv::Word, &'b CombinedImageSampler>> {
+    ) -> FxHashMap<spirv::Word, FxHashMap<spirv::Word, Cow<'b, CombinedImageSampler>>> {
 
-        let mut functions: FxHashMap<spirv::Word, FxHashMap<spirv::Word, &'b CombinedImageSampler>> = FxHashMap::default();
+        let mut seen_functions: FxHashMap<spirv::Word, FxHashMap<spirv::Word, Cow<'b, CombinedImageSampler>>> = FxHashMap::default();
 
+        // First pass, rewrite function calls involving sampled image access
         for instr in self.builder.module_mut().all_inst_iter_mut() {
             if instr.class.opcode != spirv::Op::FunctionCall {
                 continue;
@@ -698,14 +726,14 @@ impl<'a> Pass<'a> {
                 function_call_operands.push(operand);
                 function_call_operands.push(Operand::IdRef(sampled_image.sampler_variable));
 
-                match functions.entry(function_id) {
+                match seen_functions.entry(function_id) {
                     Entry::Occupied(mut vec) => {
-                        vec.get_mut().insert(sampled_image.original_uniform_pointer_type_id, sampled_image);
+                        vec.get_mut().insert(sampled_image.original_uniform_pointer_type_id, Cow::Borrowed(sampled_image));
                     }
                     Entry::Vacant(vec) => {
                         let mut map = FxHashMap::default();
                         // eprintln!("fn({}), {:#?}", function_id, sampled_image);
-                        map.insert(sampled_image.original_uniform_pointer_type_id, sampled_image);
+                        map.insert(sampled_image.original_uniform_pointer_type_id, Cow::Borrowed(sampled_image));
                         vec.insert(map);
                     }
                 }
@@ -713,67 +741,155 @@ impl<'a> Pass<'a> {
             instr.operands = function_call_operands;
         }
 
-        for instr in self.builder.module_mut().all_inst_iter_mut() {
-            if instr.class.opcode != spirv::Op::FunctionCall {
-                continue;
-            }
+        // Deal with OpAccessChains.
 
-            let Some(&Operand::IdRef(function_id)) = instr.operands.get(0) else {
-                continue;
-            };
+        let op_type_sampler = self.builder.type_sampler();
+        let op_type_sampler_pointer =
+            self.builder
+                .type_pointer(None, StorageClass::UniformConstant, op_type_sampler);
 
-            if !instr.operands[1..].iter().any(|param| {
-                let &Operand::IdRef(function_id) = param else {
-                    return false;
-                };
+        let mut functions = self.builder.module_ref().functions.clone();
 
-                op_access_chains.contains_key(&function_id)
-            }) {
-                continue;
-            };
+        for function in functions.iter_mut() {
+            for block in function.blocks.iter_mut() {
+                let mut instructions = Vec::new();
 
-            let mut function_call_operands = Vec::with_capacity(instr.operands.len());
+                // This needs to be done in two passes, first to find the OpAccessChains and
+                // update their type to the pointer type of the scalar value,
 
-            for operand in instr.operands.drain(..) {
-                let Operand::IdRef(op_ref_id) = operand else {
-                    function_call_operands.push(operand);
-                    continue;
-                };
-
-                let Some(op_access_chain) = op_access_chains.get(&op_ref_id) else {
-                    function_call_operands.push(operand);
-                    continue;
-                };
-
-
-                // // todo: assumes homogenous types, but need to check behaviour for array types and
-                // // doing op_load after.
-                // // Will need to do like rewrite_function_calls_with_global_op_access_chain
-                let sampled_image = op_access_chain.sampled_image;
-                function_call_operands.push(operand);
-                function_call_operands.push(Operand::IdRef(sampled_image.sampler_variable));
-
-                match functions.entry(function_id) {
-                    Entry::Occupied(mut vec) => {
-                        vec.get_mut().insert(sampled_image.original_uniform_pointer_type_id, sampled_image);
+                // Then to update the OpLoads.
+                for mut instr in block.instructions.clone() {
+                    if instr.class.opcode != Op::FunctionCall {
+                        instructions.push(instr);
+                        continue;
                     }
-                    Entry::Vacant(vec) => {
-                        let mut map = FxHashMap::default();
-                        // eprintln!("fn({}), {:#?}", function_id, sampled_image);
-                        map.insert(sampled_image.original_uniform_pointer_type_id, sampled_image);
-                        vec.insert(map);
+
+                    let Some(&Operand::IdRef(function_id)) = instr.operands.get(0) else {
+                        instructions.push(instr);
+                        continue;
+                    };
+
+                    // Ensure that this is an OpFunctionCall involving some previous OpAccessChain
+                    let relevant_operands = instr.operands[1..].iter().filter(|param| {
+                        let &Operand::IdRef(op_ref_id) = param else {
+                            return false;
+                        };
+
+                        op_access_chains.contains_key(&op_ref_id)
+                    }).collect::<Vec<_>>();
+
+                    if relevant_operands.is_empty() {
+                        instructions.push(instr);
+                        continue;
                     }
+
+                    // Maps OpAccessChain of texture to OpAccessChain of sampler
+                    let mut op_access_sampler_mapping = FxHashMap::default();
+                    // Insert necessary OpAccessChains
+                    for operand in relevant_operands {
+                        let &Operand::IdRef(op_ref_id) = operand else {
+                            continue;
+                        };
+
+                        let Some(&OpAccessChain {
+                            sampled_image,
+                            ref index,
+                            ..
+                        }) = op_access_chains.get(&op_ref_id) else {
+                            continue;
+                        };
+
+                        let op_access_chain_sampler_id = self.builder.id();
+                        // access chain the sampler
+                        instructions.push(Instruction {
+                            class: rspirv::grammar::CoreInstructionTable::get(spirv::Op::AccessChain),
+                            result_type: Some(op_type_sampler_pointer),
+                            result_id: Some(op_access_chain_sampler_id),
+                            operands: vec![
+                                Operand::IdRef(sampled_image.sampler_variable),
+                                index.clone(),
+                            ],
+                        });
+
+                        op_access_sampler_mapping.insert(op_ref_id, op_access_chain_sampler_id);
+                    }
+
+                    let mut function_call_operands = Vec::with_capacity(instr.operands.len());
+                    for operand in instr.operands.drain(..) {
+                        let Operand::IdRef(op_ref_id) = operand else {
+                            function_call_operands.push(operand);
+                            continue;
+                        };
+
+                        let Some(&OpAccessChain {
+                            sampled_image,
+                            ref index,
+                            original_result_type,
+                            target_pointer_type,
+                            result_id
+                        }) = op_access_chains.get(&op_ref_id) else {
+                            function_call_operands.push(operand);
+                            continue;
+                        };
+
+                        let Some(base_type_id) = sampled_image.base_type.result_id else {
+                            function_call_operands.push(operand);
+                            continue;
+                        };
+
+                        let Some(&op_access_chain_sampler) = op_access_sampler_mapping
+                            .get(&op_ref_id) else {
+                            function_call_operands.push(operand);
+                            continue;
+                        };
+
+                        function_call_operands.push(operand);
+                        function_call_operands.push(Operand::IdRef(op_access_chain_sampler));
+
+                        let original_type = self
+                            .find_global_instruction(original_result_type)
+                            .cloned()
+                            .expect("huh");
+
+                        let sampled_image = CombinedImageSampler {
+                            texture_variable: result_id,
+                            sampler_variable: op_access_chain_sampler,
+                            sampler_pointer_type: op_type_sampler_pointer,
+                            original_uniform_pointer_type_id: original_result_type,
+                            original_uniform_type: original_type,
+                            target_texture_type_id: base_type_id,
+                            target_texture_pointer_type_id: target_pointer_type,
+                            base_type: sampled_image.base_type.clone(),
+                        };
+
+                        match seen_functions.entry(function_id) {
+                            Entry::Occupied(mut vec) => {
+                                vec.get_mut().insert(original_result_type, Cow::Owned(sampled_image));
+                            }
+                            Entry::Vacant(vec) => {
+                                let mut map = FxHashMap::default();
+                                map.insert(original_result_type, Cow::Owned(sampled_image));
+                                vec.insert(map);
+                            }
+                        }
+                    }
+
+                    instr.operands = function_call_operands;
+
+                    // Restore the instructions
+                    instructions.push(instr);
                 }
+
+                block.instructions = instructions;
             }
-            instr.operands = function_call_operands;
         }
 
-
-        functions
+        self.builder.module_mut().functions = functions;
+        seen_functions
     }
 
-    fn rewrite_functions<'b>(&mut self, mappings: &FxHashMap<spirv::Word, FxHashMap<spirv::Word, &'b CombinedImageSampler>>)
-        -> FxHashMap<spirv::Word, CombinedImageSampler>
+    fn rewrite_functions_definitions<'b>(&mut self, mappings: &FxHashMap<spirv::Word, FxHashMap<spirv::Word, Cow<'b, CombinedImageSampler>>>)
+                                         -> FxHashMap<spirv::Word, CombinedImageSampler>
     {
         let mut sampled_refs = FxHashMap::default();
         let mut functions = self.builder.module_ref().functions.clone();
@@ -800,18 +916,10 @@ impl<'a> Pass<'a> {
                 continue;
             };
 
-            // let Some(function_type) = self.find_instruction(function_type_id) else {
-            //     continue;
-            // };
 
             let mut parameters = Vec::new();
             let mut param_types = Vec::new();
             for param in function.parameters.drain(..) {
-                let Some(param_type) = param.result_type else {
-                    parameters.push(param);
-                    continue;
-                };
-
                 let Some(param_id) = param.result_id else {
                     parameters.push(param);
                     continue;
@@ -822,7 +930,7 @@ impl<'a> Pass<'a> {
                     continue;
                 };
 
-                let Some(&sampled_image) = param_mappings.get(&param_type) else {
+                let Some(sampled_image) = param_mappings.get(&param_type) else {
                     parameters.push(param);
                     continue;
                 };

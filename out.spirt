@@ -9,43 +9,39 @@ module.debug_info = spv.Module.DebugInfo(
 
 type T0 = spv.OpTypeImage(SampledType: f32, spv.Dim.2D, Depth: 0, Arrayed: 0, MS: 0, Sampled: 1, spv.ImageFormat.Unknown)
 
-type T1 = spv.OpTypeArray(ElementType: T0, Length: 2u32)
+type T1 = spv.OpTypePointer(spv.StorageClass.UniformConstant, T0)
 
-type T2 = spv.OpTypePointer(spv.StorageClass.UniformConstant, T1)
-
-type T3 = spv.OpTypeArray(ElementType: spv.OpTypeSampler, Length: 2u32)
-
-type T4 = spv.OpTypePointer(spv.StorageClass.UniformConstant, T3)
+type T2 = spv.OpTypePointer(spv.StorageClass.UniformConstant, spv.OpTypeSampler)
 
 #[spv.Decoration.Location(Location: 0)]
 global_var GV`color`(spv.StorageClass.Output): f32×4
 
-func F`access(s21[2];`(
-  #[name = "tex1"]
-  v0: T2,
-  v1: T4,
+#[spv.Decoration.Binding(BindingPoint: 1)]
+#[spv.Decoration.DescriptorSet(DescriptorSet: 0)]
+global_var GV`tex`(spv.StorageClass.UniformConstant): spv.OpTypeArray(ElementType: T0, Length: 2u32)
+
+#[spv.Decoration.Binding(BindingPoint: 1)]
+#[spv.Decoration.DescriptorSet(DescriptorSet: 0)]
+global_var GV`_tex_sampler`(spv.StorageClass.UniformConstant): spv.OpTypeArray(ElementType: spv.OpTypeSampler, Length: 2u32)
+
+func F`access(s21;`(
+  #[name = "tex_arg"]
+  v0: T1,
+  v1: T2,
 ) {
-    v2 = spv.OpAccessChain(Base: v0, 0s32): spv.OpTypePointer(spv.StorageClass.UniformConstant, T0)
-    v3 = spv.OpLoad(Pointer: v2): T0
-    v4 = spv.OpAccessChain(Base: v1, 0s32): spv.OpTypePointer(spv.StorageClass.UniformConstant, spv.OpTypeSampler)
-    v5 = spv.OpLoad(Pointer: v4): spv.OpTypeSampler
-    v6 = spv.OpSampledImage(Image: v3, Sampler: v5): spv.OpTypeSampledImage(ImageType: T0)
-    v7 = spv.OpImageSampleImplicitLod(SampledImage: v6, Coordinate: f32×2(0.0, 0.0)): f32×4
-    spv.OpStore(Pointer: &GV`color`, Object: v7)
+    v2 = spv.OpLoad(Pointer: v0): T0
+    v3 = spv.OpLoad(Pointer: v1): spv.OpTypeSampler
+    v4 = spv.OpSampledImage(Image: v2, Sampler: v3): spv.OpTypePointer(spv.StorageClass.UniformConstant, spv.OpTypeSampledImage(ImageType: T0))
+    v5 = spv.OpImageSampleImplicitLod(SampledImage: v4, Coordinate: f32×2(0.0, 0.0)): f32×4
+    spv.OpStore(Pointer: &GV`color`, Object: v5)
   return
 }
 
-#[spv.Decoration.Binding(BindingPoint: 1)]
-#[spv.Decoration.DescriptorSet(DescriptorSet: 0)]
-global_var GV`tex`(spv.StorageClass.UniformConstant): T1
-
-#[spv.Decoration.Binding(BindingPoint: 1)]
-#[spv.Decoration.DescriptorSet(DescriptorSet: 0)]
-global_var GV`_tex_sampler`(spv.StorageClass.UniformConstant): T3
-
 #[spv.ExecutionMode.OriginUpperLeft]
 func F`main`() {
-    call F`access(s21[2];`(&GV`tex`, &GV`_tex_sampler`)
+    v0 = spv.OpAccessChain(Base: &GV`tex`, 0s32): T1
+    v1 = spv.OpAccessChain(Base: &GV`_tex_sampler`, 0s32): T2
+    call F`access(s21;`(v0, v1)
   return
 }
 
