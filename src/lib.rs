@@ -6,6 +6,7 @@ use std::collections::hash_map::Entry;
 
 pub struct Pass<'a> {
     pub builder: &'a mut Builder,
+    pub seen_functions: FxHashSet<spirv::Word>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,7 +41,7 @@ pub struct OpFunctionCallParam<'a> {
 
 impl<'a> Pass<'a> {
     pub fn new(builder: &'a mut Builder) -> Self {
-        let mut val = Self { builder };
+        let mut val = Self { builder, seen_functions: FxHashSet::default() };
 
         val
     }
@@ -898,6 +899,10 @@ impl<'a> Pass<'a> {
                 continue;
             };
 
+            if self.seen_functions.contains(&def_id) {
+                continue;
+            }
+
             let Some(function_def) = function.def.clone() else {
                 continue;
             };
@@ -979,6 +984,7 @@ impl<'a> Pass<'a> {
             }
 
             function.parameters = parameters;
+            self.seen_functions.insert(def_id);
         }
 
         self.builder.module_mut().functions = functions;
@@ -1015,9 +1021,7 @@ mod tests {
         let module = loader.module();
         let mut builder = Builder::new_from_module(module);
 
-        let mut pass = Pass {
-            builder: &mut builder,
-        };
+        let mut pass = Pass::new(&mut builder);
 
         pass.ensure_op_type_sampler();
         pass.do_pass();
@@ -1103,6 +1107,6 @@ mod tests {
         // check_wgsl("./test/combined-image-sampler-array.spv");
         // check_wgsl("./test/function-call-single-scalar-sampler.spv");
 
-        check_wgsl("./test/advanced.spv");
+        check_wgsl("./test/overloaded.spv");
     }
 }
