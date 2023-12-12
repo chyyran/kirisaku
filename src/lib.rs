@@ -22,11 +22,13 @@ pub struct CombinedImageSampler {
     base_type: Instruction,
 }
 
+#[derive(Debug)]
 pub struct OpAccessChain<'a> {
     sampled_image: &'a CombinedImageSampler,
     index: Operand,
 }
 
+#[derive(Debug)]
 pub struct OpFunctionCallParam<'a> {
     sampled_image: &'a CombinedImageSampler,
     type_handle: spirv::Word,
@@ -47,19 +49,21 @@ impl<'a> Pass<'a> {
         // First rewrite global loads
         self.rewrite_loads(&combined_image_samplers);
 
-        let op_access_chains = self.rewrite_op_access_chain(&combined_image_samplers);
+        let mut op_access_chains = self.rewrite_op_access_chain(&combined_image_samplers);
         self.rewrite_global_op_access_chain_loads(&op_access_chains);
 
         // Collect functions that reference combined image samplers indirectly (todo) (also rewrite the found OpFunctionCall)
 
 
         while !combined_image_samplers.is_empty() {
-            let op_functions = self.rewrite_function_calls(&combined_image_samplers);
+            let op_functions = self.rewrite_function_calls(&op_access_chains, &combined_image_samplers);
 
             combined_image_samplers = self.rewrite_functions(&op_functions);
             self.rewrite_loads(&combined_image_samplers);
 
-            let op_access_chains = self.rewrite_op_access_chain(&combined_image_samplers);
+            op_access_chains = self.rewrite_op_access_chain(&combined_image_samplers);
+
+            eprintln!("{:?}", &op_access_chains);
             self.rewrite_global_op_access_chain_loads(&op_access_chains);
         }
 
@@ -650,6 +654,7 @@ impl<'a> Pass<'a> {
     // indicating that the listed parameters should change
     fn rewrite_function_calls<'b>(
         &mut self,
+        op_access_chains: &'b FxHashMap<spirv::Word, OpAccessChain>,
         combined_image_samplers: &'b FxHashMap<spirv::Word, CombinedImageSampler>,
     ) -> FxHashMap<spirv::Word, FxHashMap<spirv::Word, &'b CombinedImageSampler>> {
 
@@ -707,6 +712,62 @@ impl<'a> Pass<'a> {
             }
             instr.operands = function_call_operands;
         }
+
+        for instr in self.builder.module_mut().all_inst_iter_mut() {
+            if instr.class.opcode != spirv::Op::FunctionCall {
+                continue;
+            }
+
+            let Some(&Operand::IdRef(function_id)) = instr.operands.get(0) else {
+                continue;
+            };
+
+            if !instr.operands[1..].iter().any(|param| {
+                let &Operand::IdRef(function_id) = param else {
+                    return false;
+                };
+
+                op_access_chains.contains_key(&function_id)
+            }) {
+                continue;
+            };
+
+            let mut function_call_operands = Vec::with_capacity(instr.operands.len());
+
+            for operand in instr.operands.drain(..) {
+                let Operand::IdRef(op_ref_id) = operand else {
+                    function_call_operands.push(operand);
+                    continue;
+                };
+
+                let Some(op_access_chain) = op_access_chains.get(&op_ref_id) else {
+                    function_call_operands.push(operand);
+                    continue;
+                };
+
+
+                // // todo: assumes homogenous types, but need to check behaviour for array types and
+                // // doing op_load after.
+                // // Will need to do like rewrite_function_calls_with_global_op_access_chain
+                let sampled_image = op_access_chain.sampled_image;
+                function_call_operands.push(operand);
+                function_call_operands.push(Operand::IdRef(sampled_image.sampler_variable));
+
+                match functions.entry(function_id) {
+                    Entry::Occupied(mut vec) => {
+                        vec.get_mut().insert(sampled_image.original_uniform_pointer_type_id, sampled_image);
+                    }
+                    Entry::Vacant(vec) => {
+                        let mut map = FxHashMap::default();
+                        // eprintln!("fn({}), {:#?}", function_id, sampled_image);
+                        map.insert(sampled_image.original_uniform_pointer_type_id, sampled_image);
+                        vec.insert(map);
+                    }
+                }
+            }
+            instr.operands = function_call_operands;
+        }
+
 
         functions
     }
@@ -924,11 +985,18 @@ mod tests {
     }
 
     #[test]
-    fn it_works() {
+    fn it_works_known() {
         check_wgsl("./test/combined-image-sampler.spv");
         check_wgsl("./test/combined-image-sampler-array.spv");
         check_wgsl("./test/function-call-single-scalar-sampler.spv");
+    }
 
-        // check_wgsl("./test/access_out_of_call.spv");
+    #[test]
+    fn it_works() {
+        // check_wgsl("./test/combined-image-sampler.spv");
+        // check_wgsl("./test/combined-image-sampler-array.spv");
+        // check_wgsl("./test/function-call-single-scalar-sampler.spv");
+
+        check_wgsl("./test/access_out_of_call.spv");
     }
 }
