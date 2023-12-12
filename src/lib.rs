@@ -929,6 +929,7 @@ impl<'a> Pass<'a> {
 
                 let Some(sampled_image) = param_mappings.get(&param_type) else {
                     parameters.push(param);
+                    param_types.push(param_type);
                     continue;
                 };
 
@@ -1102,6 +1103,6 @@ mod tests {
         // check_wgsl("./test/combined-image-sampler-array.spv");
         // check_wgsl("./test/function-call-single-scalar-sampler.spv");
 
-        check_wgsl("./test/access_out_of_call.spv");
+        check_wgsl("./test/advanced.spv");
     }
 }
